@@ -1,13 +1,28 @@
-| Dataset                                                      | What it Contains                                                                                     | Why It’s Useful                                                         |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| **Indian Supreme Court Judgments (1950-2024)**               | Huge set of SC judgments in English + regional, with metadata. ([Open Data Registry][1])             | Good source of full case texts for RAG or fine-tuning.                  |
-| **MILDSum**                                                  | \~3,122 Indian court judgments + summaries in English + Hindi. ([GitHub][2])                         | Useful for summarization tasks and multilingual summarization.          |
-| **IndicLegalQA**                                             | \~10,000 Q\&A pairs from \~1,256 Supreme Court judgments, civil + criminal mix. ([Mendeley Data][3]) | Very useful for supervised fine-tuning with instruction + answer pairs. |
-| **Indian Court Decision Annotated Corpus** (by Harde et al.) | \~50 SC decisions annotated for NER etc. Various encoding formats. ([遇见数据集][4])                      | Good if you want entity extraction / metadata tasks.                    |
-| **Open Justice India / High Court Judgments**                | Judgments + orders across High Courts, some regional languages, large volume. ([Open Justice][5])    | Great for breadth, various jurisdictions.                               |
+1. LLM Fine Tuning Dataset of Indian Legal Texts 
+  (RECOMMENDED)
 
-[1]: https://registry.opendata.aws/indian-supreme-court-judgments?utm_source=chatgpt.com "Indian Supreme Court Judgments - Registry of Open Data on AWS"
-[2]: https://github.com/Law-AI/MILDSum?utm_source=chatgpt.com "GitHub - Law-AI/MILDSum: A Novel Benchmark Dataset for Multilingual Summarization of Indian Legal Case Judgments"
-[3]: https://data.mendeley.com/datasets/gf8n8cnmvc?utm_source=chatgpt.com "IndicLegalQA Dataset - Mendeley Data"
-[4]: https://www.selectdataset.com/dataset/b1a1e512b6b9b024e26495e600a447dd?utm_source=chatgpt.com "Indian Court Decision Annotated Corpus.xlsx"
-[5]: https://openjustice-in.github.io/?utm_source=chatgpt.com "Open Justice India"
+  - Dataset: akshatgupta7/llm-fine-tuning-dataset-of-indi
+  an-legal-texts
+  - Type: QA Dataset for fine-tuning LLMs
+  - Content: IPC, CRPC, and Indian Constitution
+  - Format: Already structured for fine-tuning
+
+  2. Legal Dataset: SC Judgments India (1950–2024)
+
+  - Dataset: adarshsingh0903/legal-dataset-sc-judgments-i
+  ndia-19502024
+  - Content: Comprehensive Supreme Court judgments
+  - Coverage: Over 98% coverage from Indian Kanoon
+  - Format: Structured legal judgments
+
+  3. Supreme Court Judgment Prediction
+
+  - Dataset:
+  deepcontractor/supreme-court-judgment-prediction
+  - Type: NLP prediction dataset
+  - Content: Court judgment prediction data
+
+  4. High Court Cases In India
+
+  - Dataset: saurabhshahane/high-court-cases-in-india
+  - Content: State-wise High Court cases
