@@ -25,10 +25,11 @@ interface Message {
   timestamp: Date;
 }
 
-const VoiceOrb = ({ isListening, isSpeaking, onClick, speechSupported }: {
+const VoiceOrb = ({ isListening, isSpeaking, onClick, onStop, speechSupported }: {
   isListening: boolean;
   isSpeaking: boolean;
   onClick: () => void;
+  onStop?: () => void;
   speechSupported: boolean;
 }) => {
   return (
@@ -37,7 +38,7 @@ const VoiceOrb = ({ isListening, isSpeaking, onClick, speechSupported }: {
         className={`relative cursor-pointer transition-all duration-300 ${
           isListening ? 'scale-110' : isSpeaking ? 'scale-105' : 'hover:scale-105'
         }`}
-        onClick={onClick}
+        onClick={isSpeaking && onStop ? onStop : onClick}
       >
         {/* Outer pulse rings */}
         {isListening && (
@@ -92,7 +93,7 @@ const VoiceOrb = ({ isListening, isSpeaking, onClick, speechSupported }: {
             : isListening
             ? 'Click again to stop'
             : isSpeaking
-            ? 'Processing your request'
+            ? 'Click to stop speaking'
             : 'Ask me anything about legal matters'}
         </p>
       </div>
@@ -112,10 +113,13 @@ export default function ChatPage() {
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
+  const [speechEnabled, setSpeechEnabled] = useState(false); // Simple speech toggle
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [recognition, setRecognition] = useState<SpeechRecognition | null>(null);
   const [speechSupported, setSpeechSupported] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -132,7 +136,7 @@ export default function ChatPage() {
   }, [messages]);
 
   useEffect(() => {
-    // Initialize speech recognition
+    // Initialize speech recognition and synthesis
     if (typeof window !== 'undefined') {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (SpeechRecognition) {
@@ -166,6 +170,62 @@ export default function ChatPage() {
         console.warn('Speech recognition not supported in this browser');
         setSpeechSupported(false);
       }
+
+      // Initialize speech synthesis voices
+      const loadVoices = () => {
+        const voices = window.speechSynthesis.getVoices();
+        setAvailableVoices(voices);
+
+        // Check for previously stored voice preference
+        let bestVoice = null;
+        try {
+          const storedVoiceName = localStorage.getItem('preferredVoice');
+          if (storedVoiceName) {
+            bestVoice = voices.find(voice => voice.name === storedVoiceName);
+          }
+        } catch (error) {
+          console.warn('Could not retrieve voice preference:', error);
+        }
+
+        // If no stored preference or stored voice not found, select the best available voice
+        if (!bestVoice) {
+          const preferredVoices = voices.filter(voice =>
+            voice.lang.startsWith('en') && (
+              voice.name.toLowerCase().includes('neural') ||
+              voice.name.toLowerCase().includes('enhanced') ||
+              voice.name.toLowerCase().includes('premium') ||
+              voice.name.toLowerCase().includes('natural') ||
+              voice.name.toLowerCase().includes('samantha') ||
+              voice.name.toLowerCase().includes('alex') ||
+              voice.name.toLowerCase().includes('karen') ||
+              voice.name.toLowerCase().includes('daniel') ||
+              voice.name.toLowerCase().includes('sara') ||
+              voice.name.toLowerCase().includes('google')
+            )
+          );
+
+          const englishVoices = voices.filter(voice => voice.lang.startsWith('en'));
+          bestVoice = preferredVoices[0] || englishVoices[0] || voices[0];
+        }
+
+        if (bestVoice) {
+          setSelectedVoice(bestVoice);
+          console.log(`🎤 Selected voice: ${bestVoice.name} (${bestVoice.lang})`);
+
+          // Store the preferred voice in localStorage for consistency
+          try {
+            localStorage.setItem('preferredVoice', bestVoice.name);
+          } catch (error) {
+            console.warn('Could not save voice preference:', error);
+          }
+        }
+      };
+
+      // Load voices immediately if available
+      loadVoices();
+
+      // Also load voices when they become available (some browsers need this)
+      window.speechSynthesis.onvoiceschanged = loadVoices;
     }
   }, []);
 
@@ -201,25 +261,97 @@ export default function ChatPage() {
   };
 
   const speakText = (text: string) => {
-    if ('speechSynthesis' in window) {
+    console.log('🎤 speakText called with:', text.substring(0, 50) + '...');
+    console.log('🎤 Speech synthesis available:', 'speechSynthesis' in window);
+    console.log('🎤 Selected voice:', selectedVoice?.name);
+
+    if ('speechSynthesis' in window && text.trim()) {
       // Cancel any ongoing speech
       window.speechSynthesis.cancel();
 
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 0.9;
-      utterance.pitch = 1;
-      utterance.volume = 1;
+      // Clean and prepare the text for better speech
+      const cleanedText = text
+        .replace(/\*\*(.*?)\*\*/g, '$1') // Remove bold markdown
+        .replace(/\*(.*?)\*/g, '$1') // Remove italic markdown
+        .replace(/`(.*?)`/g, '$1') // Remove code markdown
+        .replace(/#{1,6}\s+/g, '') // Remove markdown headers
+        .replace(/\n{2,}/g, '. ') // Replace multiple newlines with period
+        .replace(/\n/g, ' ') // Replace single newlines with space
+        .replace(/\s{2,}/g, ' ') // Replace multiple spaces with single space
+        .trim();
 
-      utterance.onstart = () => setIsSpeaking(true);
-      utterance.onend = () => setIsSpeaking(false);
-      utterance.onerror = () => setIsSpeaking(false);
+      if (!cleanedText) return;
 
+      const utterance = new SpeechSynthesisUtterance(cleanedText);
+
+      // Use the pre-selected voice or fallback
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+      }
+
+      // Enhanced voice settings for professional, warm tone
+      utterance.rate = 0.82; // Optimal rate for comprehension
+      utterance.pitch = selectedVoice?.name.toLowerCase().includes('male') ? 0.8 : 0.95; // Adjust pitch based on voice
+      utterance.volume = 0.85; // Comfortable volume level
+
+      utterance.onstart = () => {
+        setIsSpeaking(true);
+        console.log(`🎤 Speaking with voice: ${selectedVoice?.name || 'System Default'}`);
+      };
+
+      utterance.onend = () => {
+        setIsSpeaking(false);
+        console.log('🎤 Speech completed');
+      };
+
+      utterance.onerror = (event) => {
+        setIsSpeaking(false);
+        console.error('🎤 Speech synthesis error:', event.error);
+
+        // Try again with default voice if there's an error
+        if (selectedVoice && event.error === 'voice-unavailable') {
+          setTimeout(() => {
+            const fallbackUtterance = new SpeechSynthesisUtterance(cleanedText);
+            fallbackUtterance.rate = 0.82;
+            fallbackUtterance.pitch = 0.9;
+            fallbackUtterance.volume = 0.85;
+            fallbackUtterance.onstart = () => setIsSpeaking(true);
+            fallbackUtterance.onend = () => setIsSpeaking(false);
+            fallbackUtterance.onerror = () => setIsSpeaking(false);
+            window.speechSynthesis.speak(fallbackUtterance);
+          }, 100);
+        }
+      };
+
+      utterance.onpause = () => {
+        console.log('🎤 Speech paused');
+      };
+
+      utterance.onresume = () => {
+        console.log('🎤 Speech resumed');
+      };
+
+      // Handle boundary events for natural pacing
+      utterance.onboundary = (event) => {
+        if (event.name === 'sentence') {
+          // Log progress for debugging
+          console.log(`🎤 Sentence boundary at character ${event.charIndex}`);
+        }
+      };
+
+      // Start speaking
+      console.log('🎤 About to call speechSynthesis.speak()');
       window.speechSynthesis.speak(utterance);
+      console.log('🎤 speechSynthesis.speak() called');
+    } else {
+      console.warn('🎤 Speech synthesis not available or empty text provided');
     }
   };
 
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
+
+    console.log('🎤 Starting handleSendMessage. isVoiceMode:', isVoiceMode);
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -242,6 +374,15 @@ export default function ChatPage() {
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, botMessage]);
+
+      // ALWAYS speak if speech is enabled - no matter what mode
+      console.log('🎤 Speech enabled state:', speechEnabled, 'isVoiceMode:', isVoiceMode);
+      if (speechEnabled) {
+        console.log('🎤 SPEECH IS ENABLED - SPEAKING RESPONSE:', response.substring(0, 100) + '...');
+        speakText(response);
+      } else {
+        console.log('🎤 Speech is disabled, not speaking');
+      }
     } catch (error) {
       console.error('Error:', error);
     } finally {
@@ -249,7 +390,7 @@ export default function ChatPage() {
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
@@ -257,16 +398,54 @@ export default function ChatPage() {
   };
 
   const toggleVoiceMode = () => {
+    console.log('🎤 Toggling voice mode. Current state:', isVoiceMode, '-> New state:', !isVoiceMode);
     setIsVoiceMode(!isVoiceMode);
     if (isListening) {
       setIsListening(false);
     }
   };
 
+  const stopSpeaking = () => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      console.log('🎤 Speech stopped by user');
+    }
+  };
+
+  // Add a test function to debug speech
+  const testSpeech = () => {
+    console.log('🎤 Testing speech synthesis...');
+
+    // Try a simple direct test first
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance("Testing direct speech");
+      utterance.volume = 1.0;
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+
+      utterance.onstart = () => console.log('🎤 Direct test started');
+      utterance.onend = () => console.log('🎤 Direct test ended');
+      utterance.onerror = (e) => console.error('🎤 Direct test error:', e.error);
+
+      window.speechSynthesis.speak(utterance);
+    }
+
+    // Also test our enhanced function
+    setTimeout(() => {
+      speakText("This is a test of the speech synthesis system. Can you hear me?");
+    }, 2000);
+  };
+
   const startListening = () => {
     if (!recognition || !speechSupported) {
       console.warn('Speech recognition not supported');
       return;
+    }
+
+    // Stop any ongoing speech first
+    if (isSpeaking) {
+      stopSpeaking();
     }
 
     if (isListening) {
@@ -302,9 +481,13 @@ export default function ChatPage() {
       };
       setMessages(prev => [...prev, botMessage]);
 
-      // Speak the response in voice mode
-      if (isVoiceMode) {
+      // ALWAYS speak if speech is enabled - no matter what mode
+      console.log('🎤 Speech enabled state (voice input):', speechEnabled, 'isVoiceMode:', isVoiceMode);
+      if (speechEnabled) {
+        console.log('🎤 SPEECH IS ENABLED - SPEAKING RESPONSE (voice input):', response.substring(0, 100) + '...');
         speakText(response);
+      } else {
+        console.log('🎤 Speech is disabled, not speaking (voice input)');
       }
     } catch (error) {
       console.error('Error processing voice input:', error);
@@ -328,7 +511,7 @@ export default function ChatPage() {
               <div className="flex items-center bg-secondary/50 rounded-lg p-1">
                 <Toggle
                   pressed={!isVoiceMode}
-                  onPressedChange={() => !isVoiceMode && toggleVoiceMode()}
+                  onPressedChange={() => isVoiceMode && toggleVoiceMode()}
                   className="data-[state=on]:bg-background data-[state=on]:text-foreground h-8 px-3"
                 >
                   <MessageCircle className="h-4 w-4 mr-1" />
@@ -336,7 +519,7 @@ export default function ChatPage() {
                 </Toggle>
                 <Toggle
                   pressed={isVoiceMode}
-                  onPressedChange={() => isVoiceMode && toggleVoiceMode()}
+                  onPressedChange={() => !isVoiceMode && toggleVoiceMode()}
                   className="data-[state=on]:bg-background data-[state=on]:text-foreground h-8 px-3"
                 >
                   <Mic className="h-4 w-4 mr-1" />
@@ -346,6 +529,27 @@ export default function ChatPage() {
               <Badge variant="secondary">
                 Online
               </Badge>
+              {/* Simple Speech Toggle */}
+              <Button
+                onClick={() => {
+                  setSpeechEnabled(!speechEnabled);
+                  console.log('🎤 Speech toggle clicked. New state:', !speechEnabled);
+                }}
+                variant={speechEnabled ? "default" : "outline"}
+                size="sm"
+                className="text-xs"
+              >
+                🔊 {speechEnabled ? 'ON' : 'OFF'}
+              </Button>
+              {/* Debug button */}
+              <Button
+                onClick={testSpeech}
+                variant="outline"
+                size="sm"
+                className="text-xs"
+              >
+                Test
+              </Button>
             </div>
           </CardTitle>
         </CardHeader>
@@ -357,6 +561,7 @@ export default function ChatPage() {
                 isListening={isListening}
                 isSpeaking={isSpeaking}
                 onClick={startListening}
+                onStop={stopSpeaking}
                 speechSupported={speechSupported}
               />
 
@@ -451,7 +656,7 @@ export default function ChatPage() {
                     placeholder="Ask me anything about legal matters..."
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
-                    onKeyPress={handleKeyPress}
+                    onKeyDown={handleKeyDown}
                     disabled={isLoading}
                     className="flex-1"
                   />
