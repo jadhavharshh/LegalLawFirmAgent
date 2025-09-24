@@ -1,11 +1,20 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import time
 import requests
 import re
+from typing import List, Optional
+import io
 
 app = FastAPI(title="Law Agent API")
+
+# In-memory storage for uploaded documents (cleared on server restart)
+case_documents = {
+    "documents": [],
+    "document_content": "",
+    "upload_timestamp": None
+}
 
 # Add CORS middleware for frontend
 app.add_middleware(
@@ -23,6 +32,29 @@ class ChatMessage(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     timestamp: float
+
+def extract_text_from_file(file_content: bytes, filename: str, content_type: str) -> str:
+    """
+    Extract text content from uploaded files.
+    For now, handles plain text files. Can be extended for PDF/DOC parsing.
+    """
+    try:
+        if content_type == "text/plain" or filename.endswith('.txt'):
+            return file_content.decode('utf-8')
+        elif filename.endswith('.pdf'):
+            # For PDF files, return a placeholder for now
+            return f"[PDF Document: {filename} - Content would be extracted with PDF parser]"
+        elif filename.endswith(('.doc', '.docx')):
+            # For Word documents, return a placeholder for now
+            return f"[Word Document: {filename} - Content would be extracted with DOC parser]"
+        else:
+            # Try to decode as text anyway
+            try:
+                return file_content.decode('utf-8')
+            except:
+                return f"[Binary file: {filename} - Content extraction not supported]"
+    except Exception as e:
+        return f"[Error extracting text from {filename}: {str(e)}]"
 
 @app.get("/health")
 def health():
@@ -151,6 +183,17 @@ def chat_endpoint(message: ChatMessage):
     USE_OLLAMA = True  # Set to True when Ollama is fast enough
 
     if USE_OLLAMA:
+        # Check if we have case documents to reference
+        document_context = ""
+        if case_documents["document_content"] and case_documents["upload_timestamp"]:
+            document_context = f"""
+CURRENT CASE DOCUMENTS:
+You have been provided with the following case documents uploaded by the client:
+{case_documents["document_content"]}
+
+IMPORTANT: Base your legal analysis and recommendations on the specific facts, circumstances, and legal issues presented in these documents. Reference specific details from the documents when providing advice.
+"""
+
         # Create a comprehensive legal law firm agent prompt
         legal_prompt = f"""You are a senior legal professional at a prestigious law firm with extensive experience across multiple practice areas including corporate law, litigation, intellectual property, real estate, family law, criminal defense, and regulatory compliance. You have decades of experience handling complex legal matters and providing strategic counsel to clients.
 
@@ -188,11 +231,15 @@ APPROACH TO LEGAL MATTERS:
 - Consider jurisdictional variations when relevant
 - Recommend when specialized counsel or court filings may be necessary
 
+{document_context}
+
 Current client inquiry: {message.message}
 
-Provide a comprehensive, professional legal analysis and recommendations as an experienced attorney would. Focus on practical guidance and actionable steps. Be thorough yet concise, maintaining the authoritative tone expected from a senior legal professional."""
+Provide a comprehensive, professional legal analysis and recommendations as an experienced attorney would. Focus on practical guidance and actionable steps. Be thorough yet concise, maintaining the authoritative tone expected from a senior legal professional.{' Reference specific details from the uploaded case documents when relevant.' if document_context else ''}"""
 
         # Try to get response from Ollama
+        if document_context:
+            print(f"🔍 Using {len(case_documents['documents'])} uploaded document(s) for context")
         print("🟡 Attempting to query Ollama...")
         ai_response = query_ollama(legal_prompt)
         print(f"🟢 Ollama response: {ai_response[:100]}...")
@@ -210,6 +257,82 @@ Provide a comprehensive, professional legal analysis and recommendations as an e
         print("⚡ Using fast fallback response")
         fallback_response = get_fallback_response(message.message)
         return ChatResponse(response=fallback_response, timestamp=time.time())
+
+@app.post("/upload-documents")
+async def upload_documents(files: List[UploadFile] = File(...)):
+    """
+    Handle document upload for case analysis and store in memory for AI context.
+    """
+    try:
+        global case_documents
+
+        uploaded_documents = []
+        document_texts = []
+
+        for file in files:
+            # Read file content
+            content = await file.read()
+
+            # Extract text content
+            text_content = extract_text_from_file(content, file.filename, file.content_type)
+            document_texts.append(f"\n--- Document: {file.filename} ---\n{text_content}")
+
+            # Collect file info
+            doc_info = {
+                "filename": file.filename,
+                "content_type": file.content_type,
+                "size": len(content)
+            }
+            uploaded_documents.append(doc_info)
+
+            # Log the document details
+            print(f"📄 Received document: {file.filename}")
+            print(f"   Content Type: {file.content_type}")
+            print(f"   Size: {len(content)} bytes")
+
+        # Store documents in memory for AI context
+        case_documents["documents"] = uploaded_documents
+        case_documents["document_content"] = "\n".join(document_texts)
+        case_documents["upload_timestamp"] = time.time()
+
+        print(f"🔍 Total documents received: {len(uploaded_documents)}")
+        print("📋 Documents stored in memory for AI context")
+        print(f"📝 Combined document content length: {len(case_documents['document_content'])} characters")
+
+        return {
+            "message": f"Successfully received and processed {len(uploaded_documents)} document(s)",
+            "documents": uploaded_documents,
+            "timestamp": time.time()
+        }
+
+    except Exception as e:
+        print(f"❌ Error processing document upload: {e}")
+        return {
+            "error": "Failed to process uploaded documents",
+            "message": str(e),
+            "timestamp": time.time()
+        }
+
+@app.post("/clear-documents")
+def clear_documents():
+    """
+    Clear all stored case documents from memory.
+    """
+    global case_documents
+
+    documents_cleared = len(case_documents["documents"])
+    case_documents = {
+        "documents": [],
+        "document_content": "",
+        "upload_timestamp": None
+    }
+
+    print(f"🗑️ Cleared {documents_cleared} document(s) from memory")
+
+    return {
+        "message": f"Cleared {documents_cleared} document(s) from case context",
+        "timestamp": time.time()
+    }
 
 if __name__ == "__main__":
     import uvicorn

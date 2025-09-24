@@ -8,7 +8,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Toggle } from "@/components/ui/toggle";
-import { Send, Bot, User, MessageCircle, Mic, MicOff } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Send, Bot, User, MessageCircle, Mic, MicOff, Upload } from "lucide-react";
 
 // TypeScript declarations for Speech APIs
 declare global {
@@ -120,7 +121,11 @@ export default function ChatPage() {
   const [speechSupported, setSpeechSupported] = useState(false);
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
     if (scrollAreaRef.current) {
@@ -496,6 +501,50 @@ export default function ChatPage() {
     }
   };
 
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (files) {
+      setSelectedFiles(Array.from(files));
+    }
+  };
+
+  const handleUploadDocuments = async () => {
+    if (selectedFiles.length === 0) return;
+
+    setIsUploading(true);
+
+    try {
+      const formData = new FormData();
+      selectedFiles.forEach((file) => {
+        formData.append('files', file);
+      });
+
+      const response = await fetch('http://localhost:8000/upload-documents', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (response.ok) {
+        console.log('Documents uploaded successfully:', selectedFiles.map(f => f.name));
+        setSelectedFiles([]);
+        setShowUploadDialog(false);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      } else {
+        console.error('Failed to upload documents');
+      }
+    } catch (error) {
+      console.error('Error uploading documents:', error);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const removeFile = (index: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
   return (
     <div className="flex flex-col h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
       <Card className="flex-1 flex flex-col m-4 border-0 shadow-lg">
@@ -508,6 +557,15 @@ export default function ChatPage() {
               <span>Legal Assistant</span>
             </div>
             <div className="flex items-center gap-3 ml-auto">
+              <Button
+                onClick={() => setShowUploadDialog(true)}
+                variant="outline"
+                size="sm"
+                className="text-xs"
+              >
+                <Upload className="h-4 w-4 mr-1" />
+                Upload Documents
+              </Button>
               <div className="flex items-center bg-secondary/50 rounded-lg p-1">
                 <Toggle
                   pressed={!isVoiceMode}
@@ -674,6 +732,73 @@ export default function ChatPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Document Upload Dialog */}
+      <Dialog open={showUploadDialog} onOpenChange={setShowUploadDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Upload Case Documents</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept=".pdf,.doc,.docx,.txt"
+                onChange={handleFileSelect}
+                className="hidden"
+                id="file-upload"
+              />
+              <Button
+                onClick={() => fileInputRef.current?.click()}
+                variant="outline"
+                className="w-full"
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Select Documents
+              </Button>
+            </div>
+
+            {selectedFiles.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Selected files:</p>
+                <div className="space-y-1">
+                  {selectedFiles.map((file, index) => (
+                    <div key={index} className="flex items-center justify-between bg-secondary/50 p-2 rounded">
+                      <span className="text-sm truncate">{file.name}</span>
+                      <Button
+                        onClick={() => removeFile(index)}
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0"
+                      >
+                        ×
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-4">
+              <Button
+                onClick={handleUploadDocuments}
+                disabled={selectedFiles.length === 0 || isUploading}
+                className="flex-1"
+              >
+                {isUploading ? "Uploading..." : "Upload Documents"}
+              </Button>
+              <Button
+                onClick={() => setShowUploadDialog(false)}
+                variant="outline"
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
