@@ -1,0 +1,22 @@
+{
+  "name": "@repo/api",
+  "version": "1.0.0",
+  "description": "Legal Law Firm Agent API",
+  "main": "main.py",
+  "scripts": {
+    "dev": "python3 -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+    "dev:api": "python3 -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+    "start": "python3 main.py",
+    "start:api": "python3 main.py",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "keywords": ["legal", "ai", "fastapi", "ollama"],
+  "author": "Harsh Jadhav",
+  "license": "MIT",
+  "dependencies": {
+    "fastapi": "^0.104.1",
+    "uvicorn": "^0.24.0",
+    "requests": "^2.31.0",
+    "pydantic": "^2.5.0"
+  }
+}

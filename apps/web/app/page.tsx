@@ -170,6 +170,8 @@ export default function ChatPage() {
   }, []);
 
   const sendMessageToAPI = async (message: string) => {
+    console.log('🚀 Sending message to API:', message);
+
     try {
       const response = await fetch('http://localhost:8000/chat', {
         method: 'POST',
@@ -182,14 +184,17 @@ export default function ChatPage() {
         }),
       });
 
+      console.log('📡 API Response status:', response.status);
+
       if (!response.ok) {
-        throw new Error('Failed to send message');
+        throw new Error(`API responded with status: ${response.status}`);
       }
 
       const data = await response.json();
+      console.log('✅ API Response data:', data);
       return data.response;
     } catch (error) {
-      console.error('Error sending message:', error);
+      console.error('❌ Error sending message:', error);
       return "I apologize, but I'm having trouble connecting to the server right now. Please try again later.";
     }
   };
