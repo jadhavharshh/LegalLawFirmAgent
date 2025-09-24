@@ -6,6 +6,7 @@ import requests
 import re
 from typing import List, Optional
 import io
+import fitz  # PyMuPDF
 
 app = FastAPI(title="Law Agent API")
 
@@ -33,26 +34,97 @@ class ChatResponse(BaseModel):
     response: str
     timestamp: float
 
+def clean_extracted_text(text: str) -> str:
+    """
+    Clean and format extracted text for better AI parsing.
+    """
+    # Remove excessive whitespace and normalize line breaks
+    text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)  # Reduce multiple empty lines to max 2
+    text = re.sub(r' +', ' ', text)  # Multiple spaces to single space
+    text = re.sub(r'\t+', ' ', text)  # Tabs to single space
+
+    # Remove page numbers and headers/footers (common patterns)
+    text = re.sub(r'^\s*Page\s+\d+.*$', '', text, flags=re.MULTILINE | re.IGNORECASE)
+    text = re.sub(r'^\s*\d+\s*$', '', text, flags=re.MULTILINE)  # Standalone page numbers
+
+    # Clean up common PDF artifacts
+    text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)  # Add space between camelCase words
+    text = re.sub(r'(\.)([A-Z])', r'\1 \2', text)  # Add space after period before capital
+
+    # Normalize quotes and dashes
+    text = text.replace('"', '"').replace('"', '"')
+    text = text.replace(''', "'").replace(''', "'")
+    text = text.replace('–', '-').replace('—', '-')
+
+    return text.strip()
+
+def extract_text_from_pdf(file_content: bytes, filename: str) -> str:
+    """
+    Extract text from PDF using PyMuPDF with smart formatting.
+    """
+    try:
+        # Open PDF from bytes
+        pdf_doc = fitz.open(stream=file_content, filetype="pdf")
+
+        extracted_text = []
+        total_pages = pdf_doc.page_count
+
+        print(f"📖 Extracting text from PDF: {filename} ({total_pages} pages)")
+
+        for page_num in range(total_pages):
+            page = pdf_doc.load_page(page_num)
+
+            # Extract text with layout preservation
+            text = page.get_text("text")
+
+            if text.strip():  # Only add non-empty pages
+                # Add page separator for multi-page documents
+                if page_num > 0:
+                    extracted_text.append(f"\n--- Page {page_num + 1} ---\n")
+                else:
+                    extracted_text.append(f"--- Page {page_num + 1} ---\n")
+
+                extracted_text.append(text)
+
+        pdf_doc.close()
+
+        if not extracted_text:
+            return f"[PDF Document: {filename} - No extractable text found]"
+
+        full_text = "".join(extracted_text)
+        cleaned_text = clean_extracted_text(full_text)
+
+        print(f"✅ Successfully extracted {len(cleaned_text)} characters from {filename}")
+        return cleaned_text
+
+    except Exception as e:
+        print(f"❌ Error extracting text from PDF {filename}: {str(e)}")
+        return f"[Error extracting text from PDF {filename}: {str(e)}]"
+
 def extract_text_from_file(file_content: bytes, filename: str, content_type: str) -> str:
     """
-    Extract text content from uploaded files.
-    For now, handles plain text files. Can be extended for PDF/DOC parsing.
+    Extract text content from uploaded files with smart parsing.
     """
     try:
         if content_type == "text/plain" or filename.endswith('.txt'):
-            return file_content.decode('utf-8')
-        elif filename.endswith('.pdf'):
-            # For PDF files, return a placeholder for now
-            return f"[PDF Document: {filename} - Content would be extracted with PDF parser]"
+            text = file_content.decode('utf-8')
+            return clean_extracted_text(text)
+
+        elif filename.endswith('.pdf') or content_type == 'application/pdf':
+            return extract_text_from_pdf(file_content, filename)
+
         elif filename.endswith(('.doc', '.docx')):
             # For Word documents, return a placeholder for now
             return f"[Word Document: {filename} - Content would be extracted with DOC parser]"
+
         else:
             # Try to decode as text anyway
             try:
-                return file_content.decode('utf-8')
+                text = file_content.decode('utf-8')
+                return clean_extracted_text(text)
             except:
                 return f"[Binary file: {filename} - Content extraction not supported]"
+
     except Exception as e:
         return f"[Error extracting text from {filename}: {str(e)}]"
 
