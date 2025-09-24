@@ -10,6 +10,14 @@ import { Badge } from "@/components/ui/badge";
 import { Toggle } from "@/components/ui/toggle";
 import { Send, Bot, User, MessageCircle, Mic, MicOff } from "lucide-react";
 
+// TypeScript declarations for Speech APIs
+declare global {
+  interface Window {
+    SpeechRecognition: typeof SpeechRecognition;
+    webkitSpeechRecognition: typeof SpeechRecognition;
+  }
+}
+
 interface Message {
   id: string;
   content: string;
@@ -17,10 +25,11 @@ interface Message {
   timestamp: Date;
 }
 
-const VoiceOrb = ({ isListening, isSpeaking, onClick }: {
+const VoiceOrb = ({ isListening, isSpeaking, onClick, speechSupported }: {
   isListening: boolean;
   isSpeaking: boolean;
   onClick: () => void;
+  speechSupported: boolean;
 }) => {
   return (
     <div className="flex flex-col items-center justify-center flex-1">
@@ -49,13 +58,17 @@ const VoiceOrb = ({ isListening, isSpeaking, onClick }: {
 
         {/* Main orb */}
         <div className={`w-24 h-24 rounded-full flex items-center justify-center transition-all duration-300 ${
-          isListening
+          !speechSupported
+            ? 'bg-gradient-to-br from-gray-400 to-gray-500 shadow-lg shadow-gray-500/50 cursor-not-allowed'
+            : isListening
             ? 'bg-gradient-to-br from-red-500 to-red-600 shadow-lg shadow-red-500/50'
             : isSpeaking
             ? 'bg-gradient-to-br from-blue-500 to-blue-600 shadow-lg shadow-blue-500/50 animate-pulse'
             : 'bg-gradient-to-br from-primary to-primary/80 shadow-lg shadow-primary/50'
         }`}>
-          {isListening ? (
+          {!speechSupported ? (
+            <MicOff className="h-8 w-8 text-white" />
+          ) : isListening ? (
             <MicOff className="h-8 w-8 text-white" />
           ) : (
             <Mic className="h-8 w-8 text-white" />
@@ -65,14 +78,18 @@ const VoiceOrb = ({ isListening, isSpeaking, onClick }: {
 
       <div className="mt-6 text-center">
         <p className="text-lg font-medium text-foreground">
-          {isListening
+          {!speechSupported
+            ? 'Speech not supported'
+            : isListening
             ? 'Listening...'
             : isSpeaking
             ? 'Speaking...'
             : 'Tap to speak'}
         </p>
         <p className="text-sm text-muted-foreground mt-1">
-          {isListening
+          {!speechSupported
+            ? 'Please use a supported browser like Chrome or Safari'
+            : isListening
             ? 'Click again to stop'
             : isSpeaking
             ? 'Processing your request'
@@ -97,6 +114,8 @@ export default function ChatPage() {
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [recognition, setRecognition] = useState<SpeechRecognition | null>(null);
+  const [speechSupported, setSpeechSupported] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -112,6 +131,87 @@ export default function ChatPage() {
     scrollToBottom();
   }, [messages]);
 
+  useEffect(() => {
+    // Initialize speech recognition
+    if (typeof window !== 'undefined') {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        const recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.lang = 'en-US';
+
+        recognition.onstart = () => {
+          setIsListening(true);
+        };
+
+        recognition.onresult = (event) => {
+          const transcript = event.results[0][0].transcript;
+          setIsListening(false);
+          handleVoiceInput(transcript);
+        };
+
+        recognition.onerror = (event) => {
+          console.error('Speech recognition error:', event.error);
+          setIsListening(false);
+        };
+
+        recognition.onend = () => {
+          setIsListening(false);
+        };
+
+        setRecognition(recognition);
+        setSpeechSupported(true);
+      } else {
+        console.warn('Speech recognition not supported in this browser');
+        setSpeechSupported(false);
+      }
+    }
+  }, []);
+
+  const sendMessageToAPI = async (message: string) => {
+    try {
+      const response = await fetch('http://localhost:8000/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: message,
+          sender: 'user'
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to send message');
+      }
+
+      const data = await response.json();
+      return data.response;
+    } catch (error) {
+      console.error('Error sending message:', error);
+      return "I apologize, but I'm having trouble connecting to the server right now. Please try again later.";
+    }
+  };
+
+  const speakText = (text: string) => {
+    if ('speechSynthesis' in window) {
+      // Cancel any ongoing speech
+      window.speechSynthesis.cancel();
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.9;
+      utterance.pitch = 1;
+      utterance.volume = 1;
+
+      utterance.onstart = () => setIsSpeaking(true);
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
 
@@ -123,19 +223,24 @@ export default function ChatPage() {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    const messageText = inputValue;
     setInputValue("");
     setIsLoading(true);
 
-    setTimeout(() => {
+    try {
+      const response = await sendMessageToAPI(messageText);
       const botMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: "I understand your question. Let me analyze this legal matter for you...",
+        content: response,
         sender: "bot",
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, botMessage]);
+    } catch (error) {
+      console.error('Error:', error);
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -153,16 +258,20 @@ export default function ChatPage() {
   };
 
   const startListening = () => {
-    if (!isListening) {
-      setIsListening(true);
-      // Simulate listening for demo purposes
-      setTimeout(() => {
-        setIsListening(false);
-        // Simulate processing the voice input
-        handleVoiceInput("What are the requirements for a valid contract?");
-      }, 3000);
-    } else {
+    if (!recognition || !speechSupported) {
+      console.warn('Speech recognition not supported');
+      return;
+    }
+
+    if (isListening) {
+      recognition.stop();
       setIsListening(false);
+    } else {
+      try {
+        recognition.start();
+      } catch (error) {
+        console.error('Error starting speech recognition:', error);
+      }
     }
   };
 
@@ -176,23 +285,26 @@ export default function ChatPage() {
 
     setMessages(prev => [...prev, userMessage]);
     setIsLoading(true);
-    setIsSpeaking(true);
 
-    setTimeout(() => {
+    try {
+      const response = await sendMessageToAPI(voiceText);
       const botMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: "A valid contract requires offer, acceptance, consideration, and mutual consent. Let me explain each element in detail...",
+        content: response,
         sender: "bot",
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, botMessage]);
-      setIsLoading(false);
 
-      // Simulate speaking animation
-      setTimeout(() => {
-        setIsSpeaking(false);
-      }, 2000);
-    }, 1000);
+      // Speak the response in voice mode
+      if (isVoiceMode) {
+        speakText(response);
+      }
+    } catch (error) {
+      console.error('Error processing voice input:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -239,6 +351,7 @@ export default function ChatPage() {
                 isListening={isListening}
                 isSpeaking={isSpeaking}
                 onClick={startListening}
+                speechSupported={speechSupported}
               />
 
               {/* Recent conversation in voice mode */}
