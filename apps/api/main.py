@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import time
 import requests
+import re
 
 app = FastAPI(title="Law Agent API")
 
@@ -73,6 +74,22 @@ def get_fallback_response(user_message: str) -> str:
     else:
         return "I understand your legal question. As your legal assistant, I can help you with various legal matters including contracts, intellectual property, litigation, and more. Could you provide more specific details about your legal concern?"
 
+def clean_ollama_response(response: str) -> str:
+    """
+    Clean the Ollama response by removing thinking tags and other unwanted content.
+    """
+    # Remove content within thinking tags (case insensitive)
+    cleaned = re.sub(r'<think>.*?</think>', '', response, flags=re.IGNORECASE | re.DOTALL)
+
+    # Remove other common reasoning patterns
+    cleaned = re.sub(r'<reasoning>.*?</reasoning>', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
+    cleaned = re.sub(r'<thought>.*?</thought>', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
+
+    # Remove any leading/trailing whitespace and normalize spacing
+    cleaned = re.sub(r'\s+', ' ', cleaned.strip())
+
+    return cleaned
+
 def query_ollama(prompt: str, model: str = "qwen3:8b") -> str:
     """
     Query Ollama with the given prompt and return the response.
@@ -86,56 +103,79 @@ def query_ollama(prompt: str, model: str = "qwen3:8b") -> str:
             "options": {
                 "temperature": 0.7,
                 "top_p": 0.9,
-                "max_tokens": 500
+                "num_predict": 500
             }
         }
 
-        response = requests.post(url, json=payload, timeout=10)
+        response = requests.post(url, json=payload, timeout=120)
         response.raise_for_status()
 
         result = response.json()
+        print(f"🔍 Full Ollama response: {result}")  # Debug log
+
+        # Check if the request completed successfully
+        if not result.get("done", False):
+            return "I apologize, but the response generation was incomplete."
+
         ai_response = result.get("response", "").strip()
 
-        if ai_response:
-            return ai_response
+        # Clean the response to remove thinking tags
+        cleaned_response = clean_ollama_response(ai_response)
+
+        # Additional validation to ensure we have actual content
+        if cleaned_response and len(cleaned_response) > 0:
+            return cleaned_response
         else:
+            print(f"⚠️ Empty or invalid response from Ollama: {result}")
             return "I apologize, but I couldn't generate a response at this time."
 
     except requests.exceptions.ConnectionError:
+        print("🔴 Connection error with Ollama")
         return "I'm having trouble connecting to the AI service. Using fallback response."
     except requests.exceptions.Timeout:
+        print("🔴 Timeout error with Ollama")
         return "The AI response took too long. Using fallback response."
     except Exception as e:
-        print(f"Error querying Ollama: {e}")
+        print(f"🔴 Error querying Ollama: {e}")
         return "I encountered an error while processing your request. Using fallback response."
 
 @app.post("/chat", response_model=ChatResponse)
 def chat_endpoint(message: ChatMessage):
     """
-    Process chat messages using Qwen3:8b model via Ollama with fallback.
+    Process chat messages using intelligent fallback for fast responses.
     """
     print(f"🔵 Received chat request: {message.message}")
 
-    # Create a legal-focused prompt
-    legal_prompt = f"""You are a knowledgeable legal assistant. Please provide accurate, helpful legal information while being clear that you are not providing legal advice and users should consult with qualified attorneys for specific legal matters.
+    # For now, use smart fallback responses for instant responses
+    # You can enable Ollama later when it's faster
+    USE_OLLAMA = True  # Set to True when Ollama is fast enough
+
+    if USE_OLLAMA:
+        # Create a legal-focused prompt with clear instructions
+        legal_prompt = f"""You are a knowledgeable legal assistant. Provide accurate, helpful legal information. Be clear that you are not providing legal advice and users should consult with qualified attorneys for specific legal matters.
 
 User question: {message.message}
 
-Please provide a comprehensive but concise response:"""
+Important: Respond with ONLY the final answer. Do not include any thinking process, reasoning steps, or tags like <think>, <reasoning>, or similar. Do not preface your answer with phrases like "I think" or "Based on the information." Simply provide the direct legal information requested."""
 
-    # Try to get response from Ollama
-    print("🟡 Attempting to query Ollama...")
-    ai_response = query_ollama(legal_prompt)
-    print(f"🟢 Ollama response: {ai_response[:100]}...")
+        # Try to get response from Ollama
+        print("🟡 Attempting to query Ollama...")
+        ai_response = query_ollama(legal_prompt)
+        print(f"🟢 Ollama response: {ai_response[:100]}...")
 
-    # If Ollama response indicates an error, use fallback
-    if any(error_phrase in ai_response for error_phrase in ["having trouble connecting", "took too long", "encountered an error", "Using fallback response"]):
-        print("🔴 Using fallback response")
+        # If Ollama response indicates an error, use fallback
+        if any(error_phrase in ai_response for error_phrase in ["having trouble connecting", "took too long", "encountered an error", "Using fallback response"]):
+            print("🔴 Using fallback response")
+            fallback_response = get_fallback_response(message.message)
+            return ChatResponse(response=fallback_response, timestamp=time.time())
+
+        print("✅ Returning Ollama response")
+        return ChatResponse(response=ai_response, timestamp=time.time())
+    else:
+        # Use fast fallback response
+        print("⚡ Using fast fallback response")
         fallback_response = get_fallback_response(message.message)
         return ChatResponse(response=fallback_response, timestamp=time.time())
-
-    print("✅ Returning Ollama response")
-    return ChatResponse(response=ai_response, timestamp=time.time())
 
 if __name__ == "__main__":
     import uvicorn

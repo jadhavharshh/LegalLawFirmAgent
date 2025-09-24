@@ -182,6 +182,7 @@ export default function ChatPage() {
           message: message,
           sender: 'user'
         }),
+        signal: AbortSignal.timeout(150000), // 2.5 minutes timeout
       });
 
       console.log('📡 API Response status:', response.status);
