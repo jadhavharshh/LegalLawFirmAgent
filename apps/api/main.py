@@ -180,16 +180,14 @@ def get_fallback_response(user_message: str) -> str:
 
 def clean_ollama_response(response: str) -> str:
     """
-    Clean the Ollama response by removing thinking tags and other unwanted content.
+    Clean the Ollama response by removing thinking tags.
     """
-    # Remove content within thinking tags (case insensitive)
+    # Remove common thinking patterns
     cleaned = re.sub(r'<think>.*?</think>', '', response, flags=re.IGNORECASE | re.DOTALL)
-
-    # Remove other common reasoning patterns
+    cleaned = re.sub(r'<thinking>.*?</thinking>', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
     cleaned = re.sub(r'<reasoning>.*?</reasoning>', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
-    cleaned = re.sub(r'<thought>.*?</thought>', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
 
-    # Remove any leading/trailing whitespace and normalize spacing
+    # Clean up whitespace
     cleaned = re.sub(r'\s+', ' ', cleaned.strip())
 
     return cleaned
@@ -256,7 +254,6 @@ def chat_endpoint(message: ChatMessage):
 
     if USE_OLLAMA:
         # Check if we have case documents to reference
-        document_context = ""
         document_list = ""
         if case_documents["document_content"] and case_documents["upload_timestamp"]:
             # Create a list of uploaded documents
@@ -304,6 +301,12 @@ ANALYTICAL FRAMEWORK:
 {document_list}
 
 CLIENT INQUIRY: {message.message}
+
+RESPONSE INSTRUCTIONS:
+- Provide ONLY your final legal counsel and recommendations
+- Do NOT include any thinking process, analysis steps, or reasoning commentary
+- Do NOT use any <think>, <thinking>, <reasoning>, or similar tags
+- Begin your response directly with your professional legal advice
 
 As your legal counsel, I will now provide you with my professional analysis and strategic recommendations. I will reference the uploaded case documents specifically and provide you with clear guidance on how to proceed with this matter."""
 
