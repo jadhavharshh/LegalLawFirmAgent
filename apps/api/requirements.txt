@@ -1,0 +1,24 @@
+# FastAPI Core
+fastapi
+uvicorn
+pydantic[email]
+python-multipart
+email-validator
+
+# Authentication & Security
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt<5.0
+
+# Database
+pymongo
+dnspython
+
+# HTTP & Utilities
+requests
+starlette
+anyio
+click
+
+# PDF Processing
+PyMuPDF
