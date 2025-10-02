@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import time
@@ -7,6 +7,13 @@ import re
 from typing import List, Optional
 import io
 import fitz  # PyMuPDF
+from datetime import timedelta
+from fastapi import Depends
+
+from auth import (
+    UserCreate, UserLogin, Token, authenticate_user, create_access_token,
+    create_user, get_user_by_email, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
+)
 
 app = FastAPI(title="Law Agent API")
 
@@ -131,6 +138,64 @@ def extract_text_from_file(file_content: bytes, filename: str, content_type: str
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+@app.post("/auth/register", response_model=Token)
+async def register(user: UserCreate):
+    existing_user = get_user_by_email(user.email)
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+    
+    db_user = create_user(user)
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.email}, expires_delta=access_token_expires
+    )
+    
+    return Token(
+        access_token=access_token,
+        token_type="bearer",
+        user={
+            "email": db_user["email"],
+            "full_name": db_user["full_name"],
+            "id": db_user["_id"]
+        }
+    )
+
+@app.post("/auth/login", response_model=Token)
+async def login(user: UserLogin):
+    db_user = authenticate_user(user.email, user.password)
+    if not db_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.email}, expires_delta=access_token_expires
+    )
+    
+    return Token(
+        access_token=access_token,
+        token_type="bearer",
+        user={
+            "email": db_user["email"],
+            "full_name": db_user["full_name"],
+            "id": str(db_user["_id"])
+        }
+    )
+
+@app.get("/auth/me")
+async def get_me(current_user: dict = Depends(get_current_user)):
+    return {
+        "email": current_user["email"],
+        "full_name": current_user["full_name"],
+        "id": str(current_user["_id"])
+    }
 
 @app.get("/health/ollama")
 def ollama_health():
