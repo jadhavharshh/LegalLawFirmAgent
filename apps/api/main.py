@@ -200,7 +200,7 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 @app.get("/health/ollama")
 def ollama_health():
     """
-    Check if Ollama is running and qwen3:8b model is available.
+    Check if Ollama is running and phi4-mini model is available.
     """
     try:
         # Test Ollama connection
@@ -208,18 +208,18 @@ def ollama_health():
         response.raise_for_status()
 
         models = response.json()
-        qwen_models = [model for model in models.get("models", []) if "qwen3" in model.get("name", "")]
+        phi4_models = [model for model in models.get("models", []) if "phi4-mini" in model.get("name", "")]
 
         return {
             "ollama_status": "connected",
-            "qwen3_available": len(qwen_models) > 0,
-            "available_models": [model.get("name") for model in qwen_models]
+            "phi4_mini_available": len(phi4_models) > 0,
+            "available_models": [model.get("name") for model in phi4_models]
         }
     except Exception as e:
         return {
             "ollama_status": "disconnected",
             "error": str(e),
-            "qwen3_available": False
+            "phi4_mini_available": False
         }
 
 def get_fallback_response(user_message: str) -> str:
@@ -257,7 +257,7 @@ def clean_ollama_response(response: str) -> str:
 
     return cleaned
 
-def query_ollama(prompt: str, model: str = "qwen3:8b") -> str:
+def query_ollama(prompt: str, model: str = "phi4-mini") -> str:
     """
     Query Ollama with the given prompt and return the response.
     """
