@@ -140,6 +140,11 @@ const VoiceOrb = ({ isListening, isSpeaking, onClick, onStop, speechSupported }:
 
 function HomePage() {
   const { user, logout } = useAuth();
+  
+  // Generate a unique session ID that persists only for this component instance
+  // This will be new on every page reload, but persist through React re-renders
+  const [sessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
+  
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "1",
@@ -178,6 +183,9 @@ function HomePage() {
   }, [messages]);
 
   useEffect(() => {
+    // Log the session ID (new on every page reload, same during re-renders)
+    console.log(`🆔 Chat session ID: ${sessionId}`);
+    
     // Initialize speech recognition and synthesis
     if (typeof window !== 'undefined') {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -273,6 +281,7 @@ function HomePage() {
 
   const sendMessageToAPI = async (message: string) => {
     console.log('🚀 Sending message to API:', message);
+    console.log('🆔 Using session ID:', sessionId);
 
     try {
       const response = await fetch('http://localhost:8000/chat', {
@@ -282,7 +291,8 @@ function HomePage() {
         },
         body: JSON.stringify({
           message: message,
-          sender: 'user'
+          sender: 'user',
+          session_id: sessionId
         }),
         signal: AbortSignal.timeout(150000), // 2.5 minutes timeout
       });

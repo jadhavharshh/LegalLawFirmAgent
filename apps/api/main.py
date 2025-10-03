@@ -24,6 +24,9 @@ case_documents = {
     "upload_timestamp": None
 }
 
+# In-memory storage for chat sessions
+chat_sessions = {}
+
 # Add CORS middleware for frontend
 app.add_middleware(
     CORSMiddleware,
@@ -36,10 +39,12 @@ app.add_middleware(
 class ChatMessage(BaseModel):
     message: str
     sender: str = "user"
+    session_id: Optional[str] = "default"
 
 class ChatResponse(BaseModel):
     response: str
     timestamp: float
+    session_id: str
 
 def clean_extracted_text(text: str) -> str:
     """
@@ -257,73 +262,94 @@ def clean_ollama_response(response: str) -> str:
 
     return cleaned
 
-def query_ollama(prompt: str, model: str = "phi4-mini") -> str:
+def query_ollama(prompt: str, model: str = "phi4-mini", system_prompt: str = "", conversation_history: List[dict] = None) -> str:
     """
-    Query Ollama with the given prompt and return the response.
+    Query Ollama with the given prompt and conversation history.
+    Maintains context for natural conversation flow.
     """
     try:
         url = "http://localhost:11434/api/generate"
+        
+        # Build conversation context from history
+        context_prompt = prompt
+        if conversation_history and len(conversation_history) > 0:
+            # Include last 6 messages (3 exchanges) for context
+            recent_history = conversation_history[-6:]
+            history_text = "\n".join([
+                f"{'User' if msg['role'] == 'user' else 'Assistant'}: {msg['content']}"
+                for msg in recent_history
+            ])
+            context_prompt = f"Previous conversation:\n{history_text}\n\nCurrent user message: {prompt}\n\nProvide a direct response to the current message:"
+        
         payload = {
             "model": model,
-            "prompt": prompt,
+            "prompt": context_prompt,
             "stream": False,
             "options": {
                 "temperature": 0.7,
                 "top_p": 0.9,
-                "num_predict": 500
+                "num_predict": 500,
+                "num_ctx": 4096,
+                "stop": ["User:", "Client:", "\n\nUser:", "\n\nClient:"],
+                "repeat_penalty": 1.2,
             }
         }
+        
+        if system_prompt:
+            payload["system"] = system_prompt
 
         response = requests.post(url, json=payload, timeout=120)
         response.raise_for_status()
 
         result = response.json()
-        print(f"🔍 Full Ollama response: {result}")  # Debug log
+        print(f"🔍 Ollama response length: {len(result.get('response', ''))}")
 
-        # Check if the request completed successfully
         if not result.get("done", False):
-            return "I apologize, but the response generation was incomplete."
+            return None
 
         ai_response = result.get("response", "").strip()
-
-        # Clean the response to remove thinking tags
         cleaned_response = clean_ollama_response(ai_response)
 
-        # Additional validation to ensure we have actual content
-        if cleaned_response and len(cleaned_response) > 0:
+        if cleaned_response and len(cleaned_response) > 10:
             return cleaned_response
         else:
-            print(f"⚠️ Empty or invalid response from Ollama: {result}")
-            return "I apologize, but I couldn't generate a response at this time."
+            print(f"⚠️ Empty or invalid response from Ollama")
+            return None
 
     except requests.exceptions.ConnectionError:
         print("🔴 Connection error with Ollama")
-        return "I'm having trouble connecting to the AI service. Using fallback response."
+        return None
     except requests.exceptions.Timeout:
         print("🔴 Timeout error with Ollama")
-        return "The AI response took too long. Using fallback response."
+        return None
     except Exception as e:
         print(f"🔴 Error querying Ollama: {e}")
-        return "I encountered an error while processing your request. Using fallback response."
+        return None
 
 @app.post("/chat", response_model=ChatResponse)
 def chat_endpoint(message: ChatMessage):
     """
-    Process chat messages using intelligent fallback for fast responses.
+    Process chat messages with session-based history tracking.
+    Each session maintains its own chat history.
     """
-    print(f"🔵 Received chat request: {message.message}")
+    session_id = message.session_id or "default"
+    print(f"🔵 Received chat request (session: {session_id}): {message.message}")
 
-    # For now, use smart fallback responses for instant responses
-    # You can enable Ollama later when it's faster
-    USE_OLLAMA = True  # Set to True when Ollama is fast enough
+    # Initialize session if it doesn't exist
+    if session_id not in chat_sessions:
+        chat_sessions[session_id] = {
+            "messages": [],
+            "created_at": time.time()
+        }
+
+    USE_OLLAMA = True
 
     if USE_OLLAMA:
         # Check if we have case documents to reference
-        document_list = ""
+        document_context = ""
         if case_documents["document_content"] and case_documents["upload_timestamp"]:
-            # Create a list of uploaded documents
             doc_names = [doc["filename"] for doc in case_documents["documents"]]
-            document_list = f"""
+            document_context = f"""
 UPLOADED CASE DOCUMENTS FOR REVIEW:
 {', '.join(f'"{name}"' for name in doc_names)}
 
@@ -333,68 +359,79 @@ DOCUMENT CONTENTS:
 CRITICAL INSTRUCTION: You have full access to the above case documents. Analyze them thoroughly and reference specific sections, clauses, terms, dates, parties, and provisions when providing your legal counsel. Quote directly from the documents when relevant to support your analysis.
 """
 
-        # Create a comprehensive legal law firm agent prompt
-        legal_prompt = f"""You are a Senior Partner and Lead Legal Counsel at a prestigious law firm. You are meeting with a valued client who has engaged your services for expert legal representation and strategic counsel. You have built your reputation on providing decisive, authoritative legal guidance backed by decades of courtroom experience and successful case outcomes.
+        # Build system prompt - professional but conversational
+        system_prompt = """You are a professional legal assistant at a law firm. Provide clear, helpful, and accurate legal guidance. Be conversational and approachable while maintaining professionalism. Keep responses concise but complete - typically 2-4 sentences unless more detail is needed. Never mention that you're an AI from Microsoft or other companies."""
 
-PROFESSIONAL IDENTITY & APPROACH:
-You are the attorney clients turn to for their most critical legal matters. You speak with the confidence and authority that comes from years of successful legal practice. You do not hedge or provide wishy-washy responses - you give clear, direct legal counsel based on your professional expertise.
+        # Build user prompt with document context if available
+        if document_context:
+            user_prompt = f"""{document_context}
 
-YOUR ROLE AS LEGAL COUNSEL:
-- Primary legal advisor and strategic counselor for this client
-- Responsible for protecting client's interests and achieving optimal outcomes
-- Provider of actionable legal strategies and tactical recommendations
-- Expert interpreter of complex legal documents and regulations
-- Strategic risk assessor and mitigation specialist
-
-COMMUNICATION STYLE AS A LAW FIRM PARTNER:
-- Address the client professionally but warmly as you would a valued client in your office
-- Provide definitive legal opinions, not general information
-- Use precise legal terminology while ensuring client comprehension
-- Present clear recommendations with strategic rationale
-- Identify immediate action items and next steps
-- Reference specific legal precedents, statutes, and regulations when applicable
-- Demonstrate mastery of the relevant legal domain
-
-ANALYTICAL FRAMEWORK:
-1. Issue Identification: Clearly identify all legal issues present
-2. Legal Analysis: Apply relevant law, regulations, and precedents
-3. Risk Assessment: Evaluate potential exposure and vulnerabilities
-4. Strategic Options: Present viable courses of action with pros/cons
-5. Recommendations: Provide specific, prioritized action steps
-6. Timeline Considerations: Address any urgent deadlines or time-sensitive matters
-
-{document_list}
-
-CLIENT INQUIRY: {message.message}
-
-RESPONSE INSTRUCTIONS:
-- Provide ONLY your final legal counsel and recommendations
-- Do NOT include any thinking process, analysis steps, or reasoning commentary
-- Do NOT use any <think>, <thinking>, <reasoning>, or similar tags
-- Begin your response directly with your professional legal advice
-
-As your legal counsel, I will now provide you with my professional analysis and strategic recommendations. I will reference the uploaded case documents specifically and provide you with clear guidance on how to proceed with this matter."""
-
-        # Try to get response from Ollama
-        if document_list:
+User question: {message.message}"""
             print(f"🔍 Using {len(case_documents['documents'])} uploaded document(s) for context")
+        else:
+            user_prompt = message.message
+        
         print("🟡 Attempting to query Ollama...")
-        ai_response = query_ollama(legal_prompt)
-        print(f"🟢 Ollama response: {ai_response[:100]}...")
+        
+        # Pass conversation history for context (only previous messages, not current)
+        ai_response = query_ollama(
+            user_prompt, 
+            system_prompt=system_prompt,
+            conversation_history=chat_sessions[session_id]["messages"]
+        )
+        
+        # Add user message to history AFTER getting response
+        chat_sessions[session_id]["messages"].append({
+            "role": "user",
+            "content": message.message,
+            "timestamp": time.time()
+        })
 
-        # If Ollama response indicates an error, use fallback
-        if any(error_phrase in ai_response for error_phrase in ["having trouble connecting", "took too long", "encountered an error", "Using fallback response"]):
+        # If Ollama fails or returns None, use fallback
+        if not ai_response:
             print("🔴 Using fallback response")
             fallback_response = get_fallback_response(message.message)
-            return ChatResponse(response=fallback_response, timestamp=time.time())
+            # Add user message if not already added
+            if not chat_sessions[session_id]["messages"] or chat_sessions[session_id]["messages"][-1]["role"] != "user":
+                chat_sessions[session_id]["messages"].append({
+                    "role": "user",
+                    "content": message.message,
+                    "timestamp": time.time()
+                })
+            chat_sessions[session_id]["messages"].append({
+                "role": "assistant",
+                "content": fallback_response,
+                "timestamp": time.time()
+            })
+            return ChatResponse(response=fallback_response, timestamp=time.time(), session_id=session_id)
+        
+        print(f"🟢 Ollama response: {ai_response[:100]}...")
+
+        # Add AI response to session history
+        chat_sessions[session_id]["messages"].append({
+            "role": "assistant",
+            "content": ai_response,
+            "timestamp": time.time()
+        })
 
         print("✅ Returning Ollama response")
-        return ChatResponse(response=ai_response, timestamp=time.time())
+        return ChatResponse(response=ai_response, timestamp=time.time(), session_id=session_id)
     else:
         # Use fast fallback response
         print("⚡ Using fast fallback response")
         fallback_response = get_fallback_response(message.message)
-        return ChatResponse(response=fallback_response, timestamp=time.time())
+        # Add user message
+        chat_sessions[session_id]["messages"].append({
+            "role": "user",
+            "content": message.message,
+            "timestamp": time.time()
+        })
+        chat_sessions[session_id]["messages"].append({
+            "role": "assistant",
+            "content": fallback_response,
+            "timestamp": time.time()
+        })
+        return ChatResponse(response=fallback_response, timestamp=time.time(), session_id=session_id)
 
 @app.post("/upload-documents")
 async def upload_documents(files: List[UploadFile] = File(...)):
@@ -471,6 +508,61 @@ def clear_documents():
         "message": f"Cleared {documents_cleared} document(s) from case context",
         "timestamp": time.time()
     }
+
+@app.post("/chat/reset")
+def reset_chat(session_id: Optional[str] = "default"):
+    """
+    Reset chat history for a specific session or all sessions.
+    Call this endpoint when frontend reloads to start fresh conversation.
+    """
+    global chat_sessions
+
+    if session_id == "all":
+        # Clear all sessions
+        sessions_cleared = len(chat_sessions)
+        chat_sessions = {}
+        print(f"🔄 Cleared all {sessions_cleared} chat session(s)")
+        return {
+            "message": f"Cleared all {sessions_cleared} chat session(s)",
+            "timestamp": time.time()
+        }
+    else:
+        # Clear specific session
+        if session_id in chat_sessions:
+            messages_cleared = len(chat_sessions[session_id]["messages"])
+            del chat_sessions[session_id]
+            print(f"🔄 Cleared chat session '{session_id}' with {messages_cleared} message(s)")
+            return {
+                "message": f"Cleared chat session '{session_id}' with {messages_cleared} message(s)",
+                "session_id": session_id,
+                "timestamp": time.time()
+            }
+        else:
+            return {
+                "message": f"Chat session '{session_id}' not found or already cleared",
+                "session_id": session_id,
+                "timestamp": time.time()
+            }
+
+@app.get("/chat/history/{session_id}")
+def get_chat_history(session_id: str = "default"):
+    """
+    Get chat history for a specific session.
+    """
+    if session_id in chat_sessions:
+        return {
+            "session_id": session_id,
+            "messages": chat_sessions[session_id]["messages"],
+            "created_at": chat_sessions[session_id]["created_at"],
+            "message_count": len(chat_sessions[session_id]["messages"])
+        }
+    else:
+        return {
+            "session_id": session_id,
+            "messages": [],
+            "message_count": 0,
+            "error": "Session not found"
+        }
 
 if __name__ == "__main__":
     import uvicorn
